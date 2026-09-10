@@ -69,48 +69,6 @@ One item on that original list has since changed:
   `emit.py` was not modified. The entry now carries the join *and* what the study says the
   variable is.
 
-## Open questions
-
-Two remain.
-
-- **Typing needs a second input.** "Single variable instances" are necessarily one of the
-  two *typed* BDC classes, and a transformation spec does not say which a variable is. So
-  the command takes `-s <schema-automator output>` — an input #93 does not mention.
-  `source_id` and `file_id` are defined only on the typed classes, so emitting untyped is
-  not available either. dbGaP now supplies a rival signal that could replace it; see
-  [the classification question](#the-classification-question-made-concrete).
-- **Study identity.** `associated_study` needs a real `phs` accession. It comes from each
-  spec directory's `researchstudy.yaml`, which the release repos do not carry, so runs
-  against them yield placeholder ids.
-
-  There is a promising fallback: **raw dbGaP filenames encode both accessions.** The
-  synthetic study's files are named
-  `phs000101.v1.pht000111.v1.p1.c1.ex0_1s.HMB.txt.gz`, so the real study accession for that
-  data is `phs000101` — exactly what the placeholder is standing in for.
-
-  The catch is that it is discarded before the extractor could see it.
-  `src/dm_bip/cleaners/prepare_input.py:154-164` regexes only the `pht` out of each raw
-  filename and writes `<pht_id>.tsv`; the `phs` is never propagated. So using this means
-  either reading `DM_RAW_SOURCE` filenames directly, or changing `prepare_input.py` to
-  record the study accession alongside the prepared tables. The latter would serve
-  mapping-provenance too, which has the same placeholder problem.
-
-Lower priority: where this belongs in the pipeline, and whether the output is a separate
-file or folded into `mapping-provenance.yaml`. #93 asks for a script, not a stage.
-
-## Known limitation: multi-study inputs
-
-`schemauto generalize-tsvs` merges every discovered input file into a **single** schema
-named `DM_SCHEMA_NAME`. For an input tree holding more than one study — say
-`synthetic/data/raw/{study_one,study_two}` — same-named tables across studies would collide,
-and the study distinction is lost at exactly the point #352 says it must be preserved.
-
-That schema is this command's typing input, so the limitation is inherited: a variable
-library built from a merged multi-study schema cannot be trusted to have typed each study's
-variables independently. Until it is resolved, run one pipeline per study — which is what
-the synthetic config does. The open question is whether the ingest should become
-study-aware instead.
-
 ---
 
 ## The chain
