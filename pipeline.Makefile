@@ -735,21 +735,32 @@ map-clean:
 
 # Output directory reset
 # ============
-# Removes everything the pipeline writes into $(DM_OUTPUT_DIR), so the directory
-# can be handed to a different study. This is the supported way to release a
-# directory the ownership guard is holding: deleting provenance.yaml by hand only
-# removes the evidence of ownership, leaving the previous study's schema, mapped
-# data, and logs to co-mingle with the next run's.
+# Removes everything the pipeline writes into $(DM_OUTPUT_DIR), including the
+# generated $(PREPARED_INPUT_MK), so the directory can be handed to a different
+# study. This is the supported way to release a directory the ownership guard is
+# holding: deleting provenance.yaml by hand only removes the evidence of
+# ownership, leaving the previous study's schema, mapped data, and logs to
+# co-mingle with the next run's.
 #
-# Deliberately does not touch $(DM_INPUT_DIR). Prepared inputs are inputs, they
-# are often a sibling of the output directory rather than inside it, and they are
-# expensive to rebuild. Use prepare-clean for the generated include file.
+# Prepared inputs are removed only when $(DM_INPUT_DIR) sits inside
+# $(DM_OUTPUT_DIR), which is the layout the pipeline generates by default. Left in
+# place they are worse than useless: prepare_input.py overwrites the tables it
+# regenerates but never deletes ones the new study does not have, and INPUT_FILES
+# is built by find-ing every TSV/CSV under $(DM_INPUT_DIR) — so the next study
+# would ingest its predecessor's leftovers, which is the co-mingling this target
+# exists to prevent. An input directory outside the output tree is the caller's,
+# and is left alone; it is often a shared sibling and expensive to rebuild.
+#
+# The filter is textual, so a relative or symlinked spelling of an inside path
+# reads as outside. That errs toward leaving files alone rather than deleting
+# outside $(DM_OUTPUT_DIR), which is the safe direction to be wrong in.
 .PHONY: output-clean
 output-clean:
 	@:$(call check_required,$(DM_OUTPUT_DIR),DM_OUTPUT_DIR must be set to clean an output directory)
 	rm -rf $(VALIDATE_OUTPUT_DIR) $(MAPPING_OUTPUT_DIR)
 	rm -f $(SCHEMA_FILE) $(PREPARED_INPUT_MK) $(PROVENANCE_FILE) $(MAPPING_PROVENANCE_FILE)
 	$(if $(_PRIOR_SCHEMA_NAME),rm -f $(DM_OUTPUT_DIR)/$(_PRIOR_SCHEMA_NAME).yaml)
+	$(if $(filter $(DM_OUTPUT_DIR)/%,$(DM_INPUT_DIR)),rm -rf $(DM_INPUT_DIR))
 
 .PHONY: FORCE
 FORCE:

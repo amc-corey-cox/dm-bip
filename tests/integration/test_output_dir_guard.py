@@ -151,3 +151,40 @@ def test_output_clean_removes_the_previous_owners_schema(tmp_path: Path) -> None
     result = _make(tmp_path, "StudyTwo", "output-clean")
     assert result.returncode == 0
     assert list(tmp_path.iterdir()) == []
+
+
+def test_output_clean_removes_prepared_inputs_inside_the_output_dir(tmp_path: Path) -> None:
+    """
+    Stale prepared tables must not survive a reset that hands the directory on.
+
+    INPUT_FILES is built by find-ing every TSV/CSV under DM_INPUT_DIR, and
+    prepare_input.py never deletes tables the new study lacks — so a leftover
+    table would be ingested by the next study, which is the co-mingling
+    output-clean exists to prevent.
+    """
+    _write_provenance(tmp_path, OWNED_BY_STUDY_ONE)
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    (prepared / "study_one_only.tsv").write_text("a\tb\n1\t2\n")
+
+    result = _make(tmp_path, "StudyTwo", "output-clean", DM_INPUT_DIR=str(prepared))
+    assert result.returncode == 0
+    assert not prepared.exists()
+
+
+def test_output_clean_leaves_prepared_inputs_outside_the_output_dir(tmp_path: Path) -> None:
+    """
+    An input directory outside the output tree belongs to the caller.
+
+    It is often a shared sibling and expensive to rebuild, so a reset of the
+    output directory must not reach outside it.
+    """
+    out_dir = tmp_path / "output"
+    _write_provenance(out_dir, OWNED_BY_STUDY_ONE)
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    (prepared / "shared.tsv").write_text("a\tb\n1\t2\n")
+
+    result = _make(out_dir, "StudyTwo", "output-clean", DM_INPUT_DIR=str(prepared))
+    assert result.returncode == 0
+    assert (prepared / "shared.tsv").exists()
