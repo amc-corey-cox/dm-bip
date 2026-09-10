@@ -5,7 +5,7 @@ artifact:
   description: >-
     A left-to-right schematic of how dbGaP digests and LinkML-Map transformation specs
     converge into BDC variable library entries, with the script behind each stage annotated.
-  build: /private/tmp/claude-501/-Users-ginniehench-Developer-dm-bip/08c4da51-3e4a-4d9e-89aa-6896662a6680/scratchpad/variable-library-chain.html
+  build: /private/tmp/claude-501/-Users-ginniehench-Developer-dm-bip/07a552b5-4879-488a-8feb-7faf83a72885/scratchpad/variable-library-chain.html
 palette:
   spec:   { light: "#0f6a60", dark: "#52bfb1" }   # the transformation-spec stream
   dbgap:  { light: "#8f5c0c", dark: "#d9a44e" }   # the dbGaP digest stream
@@ -60,10 +60,13 @@ digest cache.
 #   kind:    source | stage | output | held   (controls the box treatment)
 #   row:     names the stream, and therefore the colour, from `palette` in the front matter
 #   body:    the short text inside the box; keep lines under ~26 characters
-#   scripts: the mono annotation at the foot of the box, at most two lines
+#   scripts: the mono annotation at the foot of the box, at most two lines. On a source
+#            box this names the general handle — the variable, host, or target the input
+#            comes from — so it is set larger than the ARIC RUN value beneath it.
 #   example: an optional band under a hairline inside the box, carrying the concrete
 #            arguments one real run passes in. Only lanes marked `width: wide` have room
-#            for it. Two lines, ~43 characters each.
+#            for it. Two lines, ~43 characters each. Omit it where a run passes nothing
+#            of its own — a box with no example is drawn short and centred in its row.
 #
 # Edge fields: from, to (node id, optionally `id:top|bottom|left|right`), label, note
 # (a second, quieter line), style (solid | dashed | emphasis), stream (a palette key or
@@ -93,7 +96,7 @@ nodes:
     example:
       label: ARIC RUN
       lines:
-        - ~/Developer/NHLBI-BDC-DMC-HV/
+        - RTIInternational/NHLBI-BDC-DMC-HV@main
         - priority_variables_transform/ARIC-ingest
 
   - id: digests
@@ -106,11 +109,6 @@ nodes:
       data_dict declares the column;
       var_report measures it
     scripts: [ftp.ncbi.nlm.nih.gov/dbgap/studies]
-    example:
-      label: ARIC RUN
-      lines:
-        - --dbgap-cache /tmp/dbgap-live-check
-        - already populated, so nothing is downloaded
 
   - id: schema
     kind: source
@@ -125,8 +123,8 @@ nodes:
     example:
       label: ARIC RUN
       lines:
-        - -s /tmp/aric-mini-schema.yaml
-        - hand-cut, types five variables
+        - -s $(DM_OUTPUT_DIR)/AricSynthetic.yaml
+        - a real schema-create product
 
   - id: extract
     kind: stage
@@ -141,8 +139,8 @@ nodes:
     example:
       label: ARIC RUN
       lines:
-        - every *.yaml under …/ARIC-ingest,
-        - searched recursively
+        - 101 specs under …/ARIC-ingest —
+        - 1312 phvs across 164 datasets
 
   - id: fetch
     kind: stage
@@ -157,8 +155,8 @@ nodes:
     example:
       label: ARIC RUN
       lines:
-        - --cohort aric --no-fetch
-        - still resolves and selects by pht
+        - --cohort aric --dbgap-cache .dbgap-cache
+        - 326 of 736 fetched, then read from cache
 
   - id: read
     kind: stage
@@ -258,8 +256,9 @@ edges:
   - { from: emit:right, to: held:left, stream: held,   style: dashed, label: untyped }
 
 footnote: >-
-  One process. The only thing written between stages is the dbGaP cache, which the command
-  manages itself. The ARIC RUN lines are the concrete arguments from the cached check run.
+  One process. Stage 2 is the only one that writes to disk, yielding the .dbgap-cache, which
+  can be reused. The ARIC RUN lines name the real inputs; the check below runs the same chain
+  against a checked-in stand-in for SOURCE A.
 ```
 
 *The two crossing edges are the ones worth reading. Stage 1's set of `pht` accessions becomes
@@ -393,65 +392,138 @@ with no bounds and a type derived from the declared one — which for ARIC-shape
 
 ## Running it
 
-The `-s` schema is a pipeline product, so it has to be built first — but it is the *only*
+The `-s` schema is a **dm-bip** pipeline product, not something you write: `make
+schema-create` runs schema-automator over the prepared TSVs and writes
+`$(DM_OUTPUT_DIR)/$(DM_SCHEMA_NAME).yaml`. So it has to be built first — but it is the *only*
 prerequisite. The variable library never touches validation output or mapped data.
 
-```sh
-# build the inferred schema the typing step needs
-make schema-create   CONFIG=path/to/study.mk
+### The general form
 
-# then, either through the pipeline …
-make variable-library CONFIG=path/to/study.mk DM_COHORT=aric
+```sh
+# 1 · build the inferred schema the typing step needs
+make schema-create    CONFIG=path/to/config.mk
+
+# 2 · then either through the pipeline …
+make variable-library CONFIG=path/to/config.mk DM_COHORT=<cohort-key>
 
 # … or directly, which always regenerates — the better loop while iterating
 dm-bip extract-variable-library path/to/specs/<study> \
   -s path/to/output/<study>/<DM_SCHEMA_NAME>.yaml \
-  --cohort aric \
-  -o variable-library.yaml
+  --cohort <cohort-key> \
+  -o path/to/output/<study>/variable-library.yaml
 ```
 
 `--cohort` may be omitted: the command reads the study accession from the specs and reports
-which cohort it picked. A study with no dbGaP presence is not an error — it says so and emits
-entries carrying identity only. `--no-fetch` is a genuine offline path against whatever is
-already cached.
+which cohort it picked. `dm-bip fetch-digests --list` prints the eleven keys the manifests
+define. A study with no dbGaP presence is not an error — it says so and emits entries carrying
+identity only. `--no-fetch` is a genuine offline path against whatever is already cached.
 
-### Checking both halves
+### The ARIC run, at full scale
 
-No single corpus supplies both inputs, so the check is two runs. The synthetic corpus has no
-`phs` accession, which exercises the identity-only path; the ARIC run — whose arguments are the
-**ARIC RUN** lines in the schematic above — exercises the dbGaP path against a cache, with no
-network.
+ARIC's participant data lives in a protected cloud environment, so for a long time step 1 of
+the general form could not run here at all — there was nothing local for schema-automator to
+generalize over, and the dbGaP half had to be checked against a hand-written stand-in schema.
+
+The `aric/` corpus in [tis-lab/study-palette](https://github.com/tis-lab/study-palette) closes
+that. It generates synthetic records under ARIC's **real** accessions: the specs decide which
+tables and columns exist, dbGaP's own `data_dict`/`var_report` pair decides each column's type,
+unit, bounds and code set, and only the cell values are invented. That is enough for
+schema-automator to produce a genuine inferred schema, so the whole chain runs — against the
+real `ARIC-ingest` specs, unmodified.
 
 ```sh
-#!/usr/bin/env bash
-# Test the variable library pipeline, both halves.
-set -u
-cd ~/Developer/dm-bip
+ARIC_SYNTH=/path/to/study-palette/aric
 
-SYNTH=~/Developer/study-palette/synthetic
+cd /path/to/dm-bip
+uv run python $ARIC_SYNTH/generate.py
 
-echo "1. Classification half (synthetic corpus, fully offline)"
-echo "   expect: 35 entries (19 continuous, 16 categorical)"
+make schema-create    CONFIG=$ARIC_SYNTH/config.mk
+make variable-library CONFIG=$ARIC_SYNTH/config.mk
+```
+
+Verified on 2026-09-10, dbGaP `phs000280.v8.p2`:
+
+```
+1312 entries from 1312 source variables (677 continuous, 635 categorical)
+```
+
+Nothing unclassified. 1298 of the 1312 carry dbGaP metadata — 226 with units, 558 with bounds,
+472 with coded values. The one dataset that contributes none is `pht015212`, which the specs
+name but dbGaP has never published a dictionary for.
+
+The corpus is never published: its tables carry real `phs`, `pht` and `phv` identifiers, so an
+escaped file would look like an export of controlled-access data. It is generated locally,
+gitignored, and each raw table is named `SYNTHETIC.phs000280.…`.
+
+### The same chain from a bare checkout
+
+When the other two checkouts are not to hand, a three-spec fixture in the repo exercises the
+dbGaP half on its own. Both its inputs are committed, so it reproduces with nothing staged
+first — at the cost of covering three datasets instead of 164, and typing against a
+hand-written schema rather than a `schema-create` product.
+
+```sh
+# from the repo root, after `uv sync`
+mkdir -p tmp
+uv run dm-bip extract-variable-library tests/input/mapping_prov/ARIC-ingest \
+  -s tests/input/variable_lib/source_schema.yaml \
+  --cohort aric --dbgap-cache .dbgap-cache \
+  -o tmp/variable-library-aric.yaml
+```
+
+Both `.dbgap-cache/` and `tmp/` are gitignored, so nothing here dirties the checkout.
+
+The first run fetches six XML files — a `data_dict` and a `var_report` for each of the three
+`pht` accessions the specs name — and every run after it reads them from `.dbgap-cache`. Add
+`--no-fetch` to assert the offline path, or `--refresh` to re-download.
+
+Verified on 2026-09-09, dbGaP `phs000280.v8.p2`:
+
+```
+2 entries from 8 source variables (1 continuous, 1 categorical)
+6 variables could not be typed and were skipped
+```
+
+Six of the eight are skipped by design: `source_schema.yaml` types only `pht004063`, so the
+variables the specs draw from `pht012502` and `pht012811` stay unclassified. The first entry
+shows what dbGaP adds on top of identity — everything from `file_name` down:
+
+```yaml
+single_continuous_variables:
+- id: dbgap:phv00204719
+  associated_study: bdchm:Study/phs000280
+  variable_description: Source for Quantity.value_decimal
+  source_id: phv00204719
+  file_id: pht004063
+  file_name: DERIVE13
+  variable_name: BMI01
+  source_variable_description: Body Mass Index in Kg/(m2) [Cohort. Visit 1]
+  data_type: decimal
+  minimum_value: '14.2'
+  maximum_value: '65.91'
+  unit: Kg/(m2)
+```
+
+Those seven slots are the whole point of the dbGaP stream: the specs know the variable exists
+and the inferred schema knows it is continuous, but only the digests know it is a BMI in
+Kg/(m2) ranging 14.2 to 65.91.
+
+### Checking the identity-only half
+
+A study with no `phs` accession exercises the other path — entries carrying identity and
+nothing else. The synthetic corpus in
+[tis-lab/study-palette](https://github.com/tis-lab/study-palette) is the fixture for it:
+
+```sh
+SYNTH=path/to/study-palette/synthetic
 rm -f "$SYNTH/output/study_one/variable-library.yaml"
 make variable-library CONFIG="$SYNTH/pipeline/example_study_one.mk" \
                       SYNTH_DIR="$SYNTH" SYNTH_OUTPUT_DIR="$SYNTH/output/study_one"
-
-echo "2. dbGaP half (real ARIC dictionaries, cached, no network)"
-echo "   expect: 5 entries (4 continuous, 1 categorical)"
-uv run dm-bip extract-variable-library \
-  ~/Developer/NHLBI-BDC-DMC-HV/priority_variables_transform/ARIC-ingest \
-  -s /tmp/aric-mini-schema.yaml \
-  --cohort aric --dbgap-cache /tmp/dbgap-live-check --no-fetch \
-  -o /tmp/vl.yaml
-
-echo "--- first entry: last 4 slots come from dbGaP ---"
-head -20 /tmp/vl.yaml
 ```
 
-Half 1 was last observed on 2026-09-04 reporting `35 entries from 35 source variables
-(19 continuous, 16 categorical)`. Half 2 depends on two fixtures that are not checked in —
-`/tmp/aric-mini-schema.yaml` and a populated `/tmp/dbgap-live-check` — so it only reproduces
-where they still exist. Drop `--no-fetch` to rebuild the cache from dbGaP instead.
+Last observed on 2026-09-04 reporting `35 entries from 35 source variables (19 continuous,
+16 categorical)`. Removing the library file rather than the output directory is deliberate —
+the directory also holds the inferred schema this target reads.
 
 <!-- footer -->
 
