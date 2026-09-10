@@ -8,7 +8,7 @@ import pytest
 from dm_bip.variable_lib.classify import VariableKind
 from dm_bip.variable_lib.datamodel.variable_lib import DataTypeEnum
 from dm_bip.variable_lib.dbgap import DbgapVariable, load_tables
-from dm_bip.variable_lib.dbgap_metadata import DbgapMetadata, _data_type, _ucum
+from dm_bip.variable_lib.dbgap_metadata import DbgapMetadata, _continuous_slots, _data_type, _ucum
 
 FIXTURES = Path(__file__).parents[2] / "input" / "variable_lib" / "dbgap"
 DEMO_DD = FIXTURES / "phs000280.v8.pht000001.v1.DEMO.data_dict.xml"
@@ -241,3 +241,44 @@ class TestDeterminism:
         assert {k: v for k, v in first.items() if k != "coded_values"} == {
             k: v for k, v in second.items() if k != "coded_values"
         }
+
+
+class TestCensoredBounds:
+    """dbGaP top-codes to protect identity, and the schema's bounds are decimals."""
+
+    @staticmethod
+    def _variable(**kwargs):
+        """Build a bare variable carrying only the bounds under test."""
+        return DbgapVariable(accession="phv1", versioned_id="phv1.v1", **kwargs)
+
+    def test_a_top_coded_maximum_is_dropped(self):
+        """ARIC publishes max=">89" on age variables; decimal cannot hold it."""
+        slots = _continuous_slots(self._variable(stat_min="45", stat_max=">89"))
+        assert slots["maximum_value"] is None
+
+    def test_the_rest_of_the_entry_survives(self):
+        """Only the unrepresentable bound goes; the opposite bound is untouched."""
+        slots = _continuous_slots(self._variable(stat_min="45", stat_max=">89"))
+        assert slots["minimum_value"] == "45"
+
+    def test_a_censored_minimum_is_dropped_too(self):
+        """Nothing about the rule is specific to maxima."""
+        slots = _continuous_slots(self._variable(stat_min="<18", stat_max="99"))
+        assert (slots["minimum_value"], slots["maximum_value"]) == (None, "99")
+
+    @pytest.mark.parametrize("value", ["45", "-3", "72.53", "1e3"])
+    def test_decimals_pass_through_unchanged(self, value):
+        """Negative, fractional, and exponent forms are all valid decimals."""
+        assert _continuous_slots(self._variable(stat_max=value))["maximum_value"] == value
+
+    def test_the_drop_is_logged_with_the_published_value(self, caplog):
+        """Censoring that cannot reach the YAML must still be visible in the run."""
+        with caplog.at_level(logging.WARNING):
+            _continuous_slots(self._variable(stat_max=">89"))
+        assert ">89" in caplog.text
+        assert "phv1" in caplog.text
+
+    def test_a_censored_stat_does_not_fall_back_to_the_logical_limit(self):
+        """The stat is still the observed authority; a declared limit is a different fact."""
+        slots = _continuous_slots(self._variable(stat_max=">89", logical_max="120"))
+        assert slots["maximum_value"] is None

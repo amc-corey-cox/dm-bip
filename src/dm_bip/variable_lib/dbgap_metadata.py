@@ -18,6 +18,7 @@ returns exactly the right slot set instead.
 """
 
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from dm_bip.prepare_study.fetch_digests import CohortDigests, pht_from_filename
@@ -85,6 +86,27 @@ def _data_type(variable: DbgapVariable) -> DataTypeEnum | None:
     return None
 
 
+def _bound(value: str | None, variable: DbgapVariable, slot: str) -> str | None:
+    """
+    Keep a published bound only if it is a decimal, which is all the schema can hold.
+
+    dbGaP top-codes to protect identity, publishing ``max=">89"`` on age variables rather
+    than the real maximum. ``minimum_value``/``maximum_value`` are ``range: decimal``
+    upstream and documented as "the highest value present in the data", so a censored bound
+    has nowhere to go: passing it through fails validation and kills the whole run, and
+    rewriting ">89" as 89 would assert a maximum the data does not have. Dropping it loses
+    only the bound, and the warning keeps the censoring visible in the run output.
+    """
+    if value is None:
+        return None
+    try:
+        Decimal(value)
+    except (InvalidOperation, ValueError):
+        logger.warning("dbGaP published a non-decimal %s %r on %s; dropping it", slot, value, variable.accession)
+        return None
+    return value
+
+
 def _common_slots(variable: DbgapVariable, table: DbgapTable) -> dict[str, Any]:
     """Slots both single-variable classes accept."""
     return {
@@ -108,8 +130,8 @@ def _continuous_slots(variable: DbgapVariable) -> dict[str, Any]:
     would be inference rather than a fact read off the dictionary.
     """
     return {
-        "minimum_value": variable.stat_min or variable.logical_min,
-        "maximum_value": variable.stat_max or variable.logical_max,
+        "minimum_value": _bound(variable.stat_min or variable.logical_min, variable, "minimum"),
+        "maximum_value": _bound(variable.stat_max or variable.logical_max, variable, "maximum"),
         "unit": _ucum(variable.unit),
         "missing_value": [
             MissingValue(indicator_char=value.code, indicator_meaning=value.label) for value in variable.values
